@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Firebase secrets
+serviceAccountKey.json
+firebase_config.json
+
+# Generated avatars & outputs
+avatar/
+output/
+outputs/
+utils/outputs/
+
+# 3D files
+*.glb
+*.obj
+
+# Images
+*.jpg
+*.png
+
+# IDE
+.idea/
+.vscode/

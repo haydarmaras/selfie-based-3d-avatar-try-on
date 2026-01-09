@@ -1,0 +1,24 @@
+{
+  "user_id": "0GYWWLyDjzVqVeyc1zNKSKTLR8h2",
+  "base_model_path": "C:\\okul\\bitirme_projesi\\base_models\\male.glb",
+  "output_glb_path": "C:\\okul\\bitirme_projesi\\utils\\outputs\\0GYWWLyDjzVqVeyc1zNKSKTLR8h2.glb",
+  "colors": {
+    "skin": [
+      158.1844527363184,
+      130.44179104477612,
+      121.26915422885573
+    ],
+    "hair": [
+      108.84899870801034,
+      87.9675925925926,
+      81.10362833763996
+    ],
+    "eye": [
+      144.4491452991453,
+      111.57735042735042,
+      101.31794871794872
+    ]
+  },
+  "hair_preset": "male_short_middle_part.glb",
+  "clothing_local_path": "C:\\okul\\bitirme_projesi\\clothes\\0GYWWLyDjzVqVeyc1zNKSKTLR8h2.jpg"
+}

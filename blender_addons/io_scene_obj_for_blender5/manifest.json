@@ -1,0 +1,10 @@
+{
+  "blender_version_min": [5, 0, 0],
+  "type": "add-on",
+  "name": "OBJ Import/Export for Blender 5.0",
+  "idname": "io_scene_obj",
+  "version": [1, 0, 0],
+  "author": "Custom",
+  "description": "Restored OBJ importer/exporter for Blender 5.0",
+  "support": "COMMUNITY"
+}
