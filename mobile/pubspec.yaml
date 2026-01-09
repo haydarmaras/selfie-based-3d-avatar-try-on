@@ -1,0 +1,37 @@
+name: avatar2
+description: "Avatar uygulamasi"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  model_viewer_plus: ^1.9.1
+  cupertino_icons: ^1.0.8
+
+  # Firebase
+  firebase_core: ^3.4.0
+  firebase_auth: ^5.2.0
+  cloud_firestore: ^5.4.0
+  firebase_storage: ^12.2.0
+
+  # Selfie seçmek için
+  image_picker: ^1.1.2
+
+  # Backend’e istek için
+  http: ^1.2.2
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

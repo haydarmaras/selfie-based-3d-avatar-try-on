@@ -1,0 +1,99 @@
+# =========================
+# Miscellaneous
+# =========================
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# =========================
+# Python / Virtual Env
+# =========================
+.venv/
+__pycache__/
+*.pyd
+*.dll
+
+# =========================
+# IntelliJ / PyCharm
+# =========================
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# =========================
+# VS Code (isteğe bağlı)
+# =========================
+#.vscode/
+
+# =========================
+# Flutter / Dart / Pub
+# =========================
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+mobile/build/
+mobile/.dart_tool/
+mobile/android/.gradle/
+mobile/ios/Pods/
+mobile/ios/Runner.xcworkspace
+
+# =========================
+# Android build outputs
+# =========================
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# =========================
+# Symbolication & Obfuscation
+# =========================
+app.*.symbols
+app.*.map.json
+
+# =========================
+# 3D / Media / Generated Files
+# =========================
+*.glb
+*.gltf
+*.obj
+*.fbx
+*.png
+*.jpg
+*.jpeg
+
+# =========================
+# Project specific outputs
+# =========================
+avatar/
+output/
+outputs/
+utils/outputs/
+utils/avatar/
+clothes/
+
+# =========================
+# Firebase / Secrets
+# =========================
+firebase_config.json
+serviceAccountKey.json
+google-services.json
+
+# =========================
+# OS
+# =========================
+Thumbs.db
