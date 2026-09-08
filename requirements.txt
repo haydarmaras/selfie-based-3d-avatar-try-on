@@ -1,6 +1,7 @@
 firebase-admin
 fastapi
 uvicorn
+python-multipart
 requests
 rembg
 pillow

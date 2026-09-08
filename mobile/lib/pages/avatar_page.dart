@@ -9,58 +9,47 @@ class AvatarPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const Scaffold(body: Center(child: Text("Giriş yapılmadı")));
 
-    if (user == null) {
-      return const Scaffold(
-        body: Center(child: Text("Giriş yapılmadı")),
-      );
-    }
-
-    final userDoc =
-        FirebaseFirestore.instance.collection("users").doc(user.uid);
-
+    final ref = FirebaseFirestore.instance.collection("users").doc(user.uid);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Avatar Önizleme"),
-      ),
-      body: StreamBuilder<DocumentSnapshot>(
-        stream: userDoc.snapshots(),
+      appBar: AppBar(title: const Text("Avatar Önizleme")),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: ref.snapshots(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+          if (snap.hasError) return Center(child: Text("Firebase hatası: ${snap.error}"));
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          if (!snap.data!.exists) return const Center(child: Text("Kullanıcı verisi yok."));
+
+          final data = snap.data!.data() ?? {};
+          final status = data["avatar_status"]?.toString() ?? "";
+          final error = data["avatar_error"]?.toString() ?? "";
+          final url = data["avatar_url"]?.toString() ?? "";
+
+          if (status == "generating" || status == "queued") {
+            return const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(), SizedBox(height: 16), Text("Avatar oluşturuluyor..."),
+            ]));
           }
-
-          if (!snap.hasData || !snap.data!.exists) {
-            return const Center(child: Text("Kullanıcı verisi yok."));
+          if (status == "error") {
+            return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text("Avatar oluşturulamadı.\n$error", textAlign: TextAlign.center)));
           }
-
-          final data = snap.data!.data() as Map<String, dynamic>? ?? {};
-          final avatarUrl = data["avatar_url"] ?? "";
-
-          if (avatarUrl.isEmpty) {
-            return const Center(
-              child: Text(
-                "Avatar henüz oluşturulmadı.\n"
-                "Profil sayfasından selfie yükleyip kaydedin.",
-                textAlign: TextAlign.center,
-              ),
-            );
+          if (url.isEmpty) {
+            return const Center(child: Text("Avatar henüz oluşturulmadı.\nProfil sayfasından fotoğraf yükleyin.", textAlign: TextAlign.center));
           }
 
           return Container(
             color: Colors.black,
-            child: Center(
-              child: ModelViewer(
-                src: avatarUrl, // ▶ Firebase Storage veya URL'den 3D model
-                alt: "3D Avatar",
-                autoRotate: true,
-                cameraControls: true,
-                ar: false,
-                autoPlay: true,
-                disableZoom: false,
-                disablePan: false,
-                backgroundColor: Colors.transparent,
-              ),
+            child: ModelViewer(
+              src: url,
+              alt: "3D Avatar",
+              autoRotate: true,
+              cameraControls: true,
+              ar: false,
+              autoPlay: true,
+              disableZoom: false,
+              disablePan: false,
+              backgroundColor: Colors.transparent,
             ),
           );
         },

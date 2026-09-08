@@ -1,148 +1,177 @@
-Selfie-Based 3D Avatar and Virtual Try-On System
+# Selfie-Based 3D Avatar & Virtual Try-On
 
-This project is a selfie-based 3D avatar generation and virtual clothing try-on system developed as a computer engineering graduation project.
+Flutter + FastAPI + Firebase + Blender tabanlı bitirme projesi.
 
-The system enables users to create a personalized 3D avatar using their own selfie images and body measurements, and then visualize clothing on that avatar before making a purchase.
+## Mimari
 
-------------------------------------------------------------
+`Flutter → FastAPI → Firebase Storage/Firestore → Blender → GLB → Flutter`
 
-Project Motivation
+### Akış
 
-Online clothing shopping platforms often fail to provide accurate size and appearance estimation. This leads to high return rates and low user satisfaction.
+1. Kullanıcı kayıt/giriş yapar.
+2. Boy, kilo, omuz, bel, kalça ve bacak uzunluğunu girer.
+3. Ön ve yan selfie yükler.
+4. FastAPI görselleri Firebase Storage'a kaydeder.
+5. MediaPipe ile yüz landmark'ları çıkarılır; görünüş renkleri yaklaşık olarak tahmin edilir.
+6. Blender, cinsiyete uygun base modelini açar ve ölçülere göre bölgesel gövde ölçeklemesi uygular.
+7. Varsa saç modeli başa eklenir.
+8. Varsa kıyafet fotoğrafından üst gövde için 3D kıyafet kabuğu oluşturulur.
+9. GLB Firebase Storage'a yüklenir ve Firestore'daki `avatar_url` güncellenir.
+10. Flutter `model_viewer_plus` ile avatarı gösterir.
 
-The goal of this project is to reduce these problems by allowing users to generate a realistic 3D avatar based on their physical characteristics and preview how clothing items would look on their own body.
+## Klasör yapısı
 
-------------------------------------------------------------
+```text
+project-root/
+├─ main.py
+├─ requirements.txt
+├─ serviceAccountKey.json       # LOKAL, GitHub'a yüklenmez
+├─ base_models/
+│  ├─ male.glb                  # LOKAL model asset'i
+│  └─ female.glb                # LOKAL model asset'i
+├─ hair_models/                 # opsiyonel
+│  ├─ male_short_middle_part.glb
+│  └─ female_default.glb
+├─ clothes/                     # otomatik oluşturulur
+├─ outputs/                     # otomatik oluşturulur
+├─ utils/
+│  ├─ api.py
+│  ├─ avatar_generator.py
+│  ├─ config.py
+│  └─ firebase_init.py
+├─ blender_scripts/
+│  └─ build_avatar.py
+└─ mobile/
+```
 
-System Overview
+## 1. Firebase Admin
 
-The system consists of three main components:
+Firebase Console'dan Python Admin SDK service-account JSON dosyasını alın ve proje köküne:
 
-1. Mobile Application
-2. Backend Service
-3. 3D Processing Engine
+`serviceAccountKey.json`
 
-Each component works independently but communicates through well-defined interfaces.
+adıyla koyun. Bu dosyayı GitHub'a yüklemeyin.
 
-------------------------------------------------------------
+Storage bucket varsayılan olarak:
 
-Mobile Application (Flutter)
+`bitirmeprojesi-9b244.firebasestorage.app`
 
-The mobile application is developed using Flutter.
+Kendi bucket'ınız farklıysa `FIREBASE_STORAGE_BUCKET` ortam değişkenini ayarlayın.
 
-Main responsibilities of the mobile application:
-- User authentication using Firebase Authentication
-- Collecting user body measurements
-- Collecting front and side selfie images
-- Sending data to the backend API
-- Displaying the generated 3D avatar using a GLB viewer
-- Allowing users to upload clothing images for virtual try-on
+## 2. Base model ve saç modelleri
 
-The avatar is displayed in real time using the model_viewer_plus package.
+Backend'in çalışması için en az:
 
-------------------------------------------------------------
+- `base_models/male.glb`
+- `base_models/female.glb`
 
-Backend Service (FastAPI)
+gereklidir. Saç modelleri opsiyoneldir; bulunmazsa saç importu atlanır.
 
-The backend service is developed using Python and FastAPI.
+Bu binary dosyalar `.gitignore` ile dışarıda tutulur. Bu nedenle repository klonlandığında otomatik olarak gelmez.
 
-Main responsibilities of the backend:
-- Receiving selfie images and user measurements
-- Image processing using OpenCV and MediaPipe
-- Estimating skin, hair and eye colors
-- Managing avatar generation workflow
-- Running Blender in background mode
-- Uploading the generated avatar to Firebase Storage
-- Storing user data in Firebase Firestore
+## 3. Blender
 
-------------------------------------------------------------
+Blender 4.x/5.x kurulu olmalıdır. Backend Blender'ı şu sırayla arar:
 
-3D Processing and Avatar Generation (Blender)
+1. `BLENDER_EXE` ortam değişkeni
+2. Bilinen Windows Blender yolları
+3. PATH içindeki `blender`
 
-Blender is used as the 3D processing engine in headless mode.
+Örnek PowerShell:
 
-Avatar generation steps:
-- A base human model is selected according to gender
-- Face landmarks are extracted from the selfie image
-- Hair models are attached to the head mesh
-- Skin, hair and eye colors are applied
-- Clothing images are applied as textures
-- The final avatar is exported as a GLB file
+```powershell
+$env:BLENDER_EXE="C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
+```
 
-------------------------------------------------------------
+## 4. Python backend
 
-Avatar Generation Pipeline
+Python sanal ortamı oluşturun:
 
-1. User uploads front and side selfie images
-2. Face landmarks and segmentation masks are extracted
-3. Skin, hair and eye colors are estimated from the selfie
-4. A gender-based base model is selected
-5. Hair model is attached
-6. Clothing texture is applied
-7. Final avatar is exported and uploaded
-
-------------------------------------------------------------
-
-Technologies Used
-
-Mobile Application:
-- Flutter
-- Dart
-
-Backend:
-- Python
-- FastAPI
-- OpenCV
-- MediaPipe
-
-3D Processing:
-- Blender
-- glTF / GLB format
-
-Cloud Services:
-- Firebase Authentication
-- Firebase Firestore
-- Firebase Storage
-
-------------------------------------------------------------
-
-Project Structure
-
-bitirme_projesi/
-flutter_app/
-utils/
-api.py
-avatar_generator.py
-blender_integration/
-outputs/
-blender_scripts/
-build_avatar.py
-base_models/
-hair_models/
-clothes/
-README.md
-
-------------------------------------------------------------
-
-How to Run the Project
-
-Backend:
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python main.py
+```
 
-Mobile Application:
+Kontrol:
+
+`GET http://127.0.0.1:8000/health`
+
+`{"status":"ok", ...}` dönmelidir.
+
+## 5. Flutter
+
+```powershell
+cd mobile
+flutter clean
 flutter pub get
 flutter run
+```
 
-------------------------------------------------------------
+Android emulator kullanılıyorsa backend adresi:
 
-Academic Note
+`http://10.0.2.2:8000`
 
-This project was developed as a computer engineering graduation project. It demonstrates the integration of mobile application development, backend systems, computer vision techniques and 3D graphics processing.
+Fiziksel Android cihaz kullanıyorsanız `profile_setup_page.dart` ve `add_clothing_page.dart` içindeki backend adresini bilgisayarınızın LAN IP'si ile değiştirin; örneğin `http://192.168.1.20:8000`.
 
-------------------------------------------------------------
+## Firestore `users/{uid}` alanları
 
-Author
+```text
+ad_soyad
+cinsiyet
+boy
+kilo
+omuz_genisligi
+bel_cevresi
+kalca_cevresi
+bacak_uzunlugu
+selfie_front_url
+selfie_side_url
+avatar_url
+avatar_status
+avatar_error
+has_clothing
+clothing_storage_path
+face_landmarks_count
+```
 
-Haydar Maras  
-Computer Engineering Student  
-Graduation Project – 2025
+## API
+
+### `GET /health`
+
+Backend durumunu kontrol eder.
+
+### `POST /avatar_olustur`
+
+Multipart alanları:
+
+- `user_id`
+- `selfie_front`
+- `selfie_side`
+- `boy`
+- `kilo`
+- `cinsiyet`
+- `omuz_genisligi`
+- `bel_cevresi`
+- `kalca_cevresi`
+- `bacak_uzunlugu`
+
+### `POST /kiyafet_ekle`
+
+Multipart alanları:
+
+- `user_id`
+- `clothing_image`
+
+## Önemli teknik not
+
+Bu sürümde kıyafet, yüklenen 2D fotoğraftan avatarın üst gövdesi üzerinde 3D bir kabuk olarak oluşturulur ve görsel bu kabuğun materyaline uygulanır. Bu, önceki yalnızca `body` materyalini değiştiren uygulamadan daha doğru bir 3D sonuç verir; ancak fizik tabanlı kumaş simülasyonu veya tek fotoğraftan gerçek 3D giysi rekonstrüksiyonu değildir.
+
+SMPL-X modeli repository'de binary asset olarak bulunmadığı için mevcut üretim hattı base GLB üzerinden çalışır. SMPL-X'e geçiş yapılacaksa gerçek SMPL-X model dosyaları ayrıca kurulmalıdır.
+
+## Güvenlik
+
+- `serviceAccountKey.json` GitHub'a yüklenmez.
+- Avatar, selfie ve kıyafet dosyaları GitHub'a yüklenmez.
+- Üretimde `allow_origins=["*"]` yerine uygulamanızın gerçek domain/IP listesini kullanın.
