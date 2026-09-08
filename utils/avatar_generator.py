@@ -1,42 +1,104 @@
-import os
 import json
+import os
 import subprocess
+import uuid
+from datetime import timedelta
 from typing import Optional
 
 import cv2
 import mediapipe as mp
 import numpy as np
 
-from .firebase_init import db, bucket
+from .config import (
+    AVATAR_DIR,
+    BLENDER_INTEGRATION_DIR,
+    BLENDER_SCRIPTS_DIR,
+    CLOTHES_DIR,
+    OUTPUT_DIR,
+    base_model_path,
+    find_blender_executable,
+    hair_model_path,
+)
+from .firebase_init import bucket, db
 
-UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCAL_AVATAR_DIR = os.path.join(UTILS_DIR, "avatars")
-LOCAL_OUTPUT_DIR = os.path.join(UTILS_DIR, "outputs")
-BLENDER_INTEGRATION_DIR = os.path.join(UTILS_DIR, "blender_integration")
-
-PROJECT_ROOT = os.path.dirname(UTILS_DIR)
-BASE_MODELS_DIR = os.path.join(PROJECT_ROOT, "base_models")
-BLENDER_SCRIPTS_DIR = os.path.join(PROJECT_ROOT, "blender_scripts")
-
+BLENDER_SCRIPT_PATH = os.path.join(BLENDER_SCRIPTS_DIR, "build_avatar.py")
 CONFIG_PATH_TEMPLATE = os.path.join(BLENDER_INTEGRATION_DIR, "{}_config.json")
 
-os.makedirs(LOCAL_AVATAR_DIR, exist_ok=True)
-os.makedirs(LOCAL_OUTPUT_DIR, exist_ok=True)
-os.makedirs(BLENDER_INTEGRATION_DIR, exist_ok=True)
 
-BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
-BLENDER_SCRIPT_PATH = os.path.join(BLENDER_SCRIPTS_DIR, "build_avatar.py")
+def _safe_float(value, name, minimum, maximum):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} sayısal olmalıdır.")
+    if not minimum <= number <= maximum:
+        raise ValueError(f"{name} {minimum:g}-{maximum:g} aralığında olmalıdır.")
+    return number
+
+
+def validate_measurements(data):
+    return {
+        "boy": _safe_float(data.get("boy"), "Boy", 100, 250),
+        "kilo": _safe_float(data.get("kilo"), "Kilo", 25, 300),
+        "omuz_genisligi": _safe_float(data.get("omuz_genisligi"), "Omuz", 20, 100),
+        "bel_cevresi": _safe_float(data.get("bel_cevresi"), "Bel", 40, 180),
+        "kalca_cevresi": _safe_float(data.get("kalca_cevresi"), "Kalça", 40, 200),
+        "bacak_uzunlugu": _safe_float(data.get("bacak_uzunlugu"), "Bacak uzunluğu", 40, 160),
+    }
+
+
+def extract_face_data(path: str):
+    img = cv2.imread(path)
+    if img is None:
+        raise RuntimeError(f"Görüntü okunamadı: {path}")
+
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    with mp.solutions.face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+    ) as face_mesh:
+        result = face_mesh.process(rgb)
+
+    if not result.multi_face_landmarks:
+        return []
+
+    return [
+        {"x": round(float(p.x), 6), "y": round(float(p.y), 6), "z": round(float(p.z), 6)}
+        for p in result.multi_face_landmarks[0].landmark
+    ]
 
 
 def extract_hair_mask(path: str):
-    mp_seg = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
     img = cv2.imread(path)
     if img is None:
         return None
-    seg = mp_seg.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).segmentation_mask
-    seg = (seg * 255).astype("uint8")
-    hair_mask = (seg > 180).astype("uint8") * 255
-    return hair_mask
+
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h, w = rgb.shape[:2]
+    with mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1) as seg_model:
+        mask = seg_model.process(rgb).segmentation_mask
+
+    # SelfieSegmentation insan maskesi verir; saç segmentasyonu değildir.
+    # Bu yüzden yüzün üstündeki kişi maskesini saç için yaklaşık bölge olarak kullanıyoruz.
+    person = (mask > 0.65).astype(np.uint8) * 255
+    upper = np.zeros_like(person)
+    upper[: int(h * 0.42), :] = person[: int(h * 0.42), :]
+    upper[:, : int(w * 0.12)] = 0
+    upper[:, int(w * 0.88) :] = 0
+    return cv2.morphologyEx(upper, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+
+
+def _robust_mean(pixels, fallback):
+    if pixels is None or pixels.size == 0:
+        return np.asarray(fallback, dtype=np.float32)
+    values = pixels.reshape(-1, 3).astype(np.float32)
+    # Aşırı parlak/karanlık pikselleri at.
+    brightness = values.mean(axis=1)
+    values = values[(brightness > 20) & (brightness < 245)]
+    if len(values) == 0:
+        return np.asarray(fallback, dtype=np.float32)
+    return np.median(values, axis=0)
 
 
 def estimate_colors(path: str, hair_mask):
@@ -47,118 +109,128 @@ def estimate_colors(path: str, hair_mask):
     img_bgr = cv2.imread(path)
     if img_bgr is None:
         return fallback_skin, fallback_hair, fallback_eye
-
     img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    h, w, _ = img.shape
+    h, w = img.shape[:2]
 
-    # skin
-    sx1, sx2 = int(w * 0.30), int(w * 0.70)
-    sy1, sy2 = int(h * 0.30), int(h * 0.70)
-    face_crop = img[sy1:sy2, sx1:sx2]
-    skin = face_crop.reshape(-1, 3).mean(axis=0) if face_crop.size > 0 else fallback_skin
+    face = img[int(h * 0.25):int(h * 0.65), int(w * 0.30):int(w * 0.70)]
+    skin = _robust_mean(face, fallback_skin)
 
-    # hair
     if hair_mask is not None:
-        hair_mask = cv2.resize(hair_mask, (w, h))
-        pixels = img[hair_mask > 0]
-        hair = pixels.reshape(-1, 3).mean(axis=0) if pixels.size > 0 else fallback_hair
+        hm = cv2.resize(hair_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        hair = _robust_mean(img[hm > 0], fallback_hair)
     else:
         hair = fallback_hair
 
-    # eye (basit)
-    ex1, ex2 = int(w * 0.35), int(w * 0.65)
-    ey1, ey2 = int(h * 0.35), int(h * 0.50)
-    eye_crop = img[ey1:ey2, ex1:ex2]
-    eye = eye_crop.reshape(-1, 3).mean(axis=0) if eye_crop.size > 0 else fallback_eye
-
+    eye = _robust_mean(img[int(h * 0.35):int(h * 0.50), int(w * 0.35):int(w * 0.65)], fallback_eye)
     return skin, hair, eye
 
 
-def pick_base_model_path(gender: str) -> str:
-    g = str(gender).lower()
-    if g in ["erkek", "male", "m"]:
-        return os.path.join(BASE_MODELS_DIR, "male.glb")
-    return os.path.join(BASE_MODELS_DIR, "female.glb")
+def _download_selfie(user_id: str, suffix: str):
+    local = os.path.join(AVATAR_DIR, f"{user_id}_{suffix}.jpg")
+    blob = bucket.blob(f"selfies/{user_id}_{suffix}.jpg")
+    if not blob.exists():
+        raise RuntimeError(f"Firebase Storage'da {suffix} selfie bulunamadı.")
+    blob.download_to_filename(local)
+    return local
+
+
+def _download_clothing_if_needed(user_id: str):
+    local = os.path.join(CLOTHES_DIR, f"{user_id}.jpg")
+    if os.path.isfile(local):
+        return local
+    blob = bucket.blob(f"clothes/{user_id}.jpg")
+    if blob.exists():
+        blob.download_to_filename(local)
+        return local
+    return None
+
+
+def _publish_file(blob_path: str, local_path: str, content_type: str) -> str:
+    blob = bucket.blob(blob_path)
+    blob.upload_from_filename(local_path, content_type=content_type)
+    token = str(uuid.uuid4())
+    blob.metadata = {**(blob.metadata or {}), "firebaseStorageDownloadTokens": token}
+    blob.patch()
+    encoded = blob.name.replace("/", "%2F")
+    return (
+        "https://firebasestorage.googleapis.com/v0/b/"
+        f"{bucket.name}/o/{encoded}?alt=media&token={token}"
+    )
 
 
 def run_blender_for_user(user_id: str):
-    cmd = [
-        BLENDER_EXE,
-        "-b",
-        "--python",
-        BLENDER_SCRIPT_PATH,
-        "--",
-        user_id,
-    ]
-    print("[BLENDER CMD]", " ".join(cmd))
-    res = subprocess.run(cmd)
-    if res.returncode != 0:
-        raise RuntimeError(f"Blender hata returncode={res.returncode}")
+    blender = find_blender_executable()
+    if not os.path.isfile(BLENDER_SCRIPT_PATH):
+        raise RuntimeError(f"Blender script bulunamadı: {BLENDER_SCRIPT_PATH}")
+    cmd = [blender, "-b", "--python", BLENDER_SCRIPT_PATH, "--", user_id]
+    print("[BLENDER CMD]", subprocess.list2cmdline(cmd))
+    result = subprocess.run(cmd, cwd=os.path.dirname(BLENDER_SCRIPT_PATH), text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Blender hata verdi. returncode={result.returncode}")
 
 
 def generate_avatar_for_user(user_id: str) -> Optional[str]:
-    print(f"\n=== Avatar Üretimi Başladı: {user_id} ===")
-
     user_ref = db.collection("users").document(user_id)
-    user_doc = user_ref.get()
-    if not user_doc.exists:
-        raise RuntimeError("users/<uid> yok")
+    snapshot = user_ref.get()
+    if not snapshot.exists:
+        raise RuntimeError("users/<uid> Firestore belgesi yok.")
 
-    user = user_doc.to_dict() or {}
-    gender = user.get("cinsiyet", "erkek")
+    user = snapshot.to_dict() or {}
+    measurements = validate_measurements(user)
+    gender = user.get("cinsiyet", "Erkek")
 
-    # selfie'yi storage'dan indir
-    selfie_local = os.path.join(LOCAL_AVATAR_DIR, f"{user_id}_front.jpg")
-    front_blob = bucket.blob(f"selfies/{user_id}_front.jpg")
-    if not front_blob.exists():
-        raise RuntimeError("Ön selfie storage'da yok")
-    front_blob.download_to_filename(selfie_local)
+    front_path = _download_selfie(user_id, "front")
+    side_path = _download_selfie(user_id, "side")
 
-    # renkler
-    mask = extract_hair_mask(selfie_local)
-    skin, hair, eye = estimate_colors(selfie_local, mask)
+    face_front = extract_face_data(front_path)
+    face_side = extract_face_data(side_path)
+    if not face_front:
+        raise RuntimeError("Ön selfie'de yüz bulunamadı. Yüzün net göründüğü bir fotoğraf yükleyin.")
 
-    base_model_path = pick_base_model_path(gender)
-    if not os.path.exists(base_model_path):
-        raise RuntimeError(f"Base model yok: {base_model_path}")
+    hair_mask = extract_hair_mask(front_path)
+    skin, hair, eye = estimate_colors(front_path, hair_mask)
 
-    output_glb = os.path.join(LOCAL_OUTPUT_DIR, f"{user_id}.glb")
+    base_path = base_model_path(gender)
+    if not os.path.isfile(base_path):
+        raise RuntimeError(
+            f"Base model bulunamadı: {base_path}. "
+            "base_models/male.glb ve female.glb dosyalarını yerel projeye ekleyin."
+        )
 
-    # hair preset seçimi (firestore'dan)
     hair_preset = user.get("hair_preset")
-    if not hair_preset:
-        hair_preset = "male_short_middle_part.glb" if str(gender).lower() in ["erkek", "male", "m"] else "female_default.glb"
+    hair_path = hair_model_path(gender, hair_preset)
+
+    clothing_path = _download_clothing_if_needed(user_id)
+    output_path = os.path.join(OUTPUT_DIR, f"{user_id}.glb")
 
     cfg = {
         "user_id": user_id,
-        "base_model_path": base_model_path,
-        "output_glb_path": output_glb,
+        "base_model_path": base_path,
+        "output_glb_path": output_path,
+        "measurements": measurements,
         "colors": {
             "skin": skin.tolist(),
             "hair": hair.tolist(),
             "eye": eye.tolist(),
         },
-        "hair_preset": hair_preset,
-        # Kıyafet: build_avatar.py local'den okuyacak
-        "clothing_local_path": os.path.join(PROJECT_ROOT, "clothes", f"{user_id}.jpg"),
+        "hair_model_path": hair_path or "",
+        "clothing_local_path": clothing_path or "",
+        "face_landmarks": {"front": face_front, "side": face_side},
     }
 
     cfg_path = CONFIG_PATH_TEMPLATE.format(user_id)
     with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+    user_ref.set({
+        "face_landmarks_count": len(face_front),
+        "avatar_status": "generating",
+    }, merge=True)
 
     run_blender_for_user(user_id)
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) < 1024:
+        raise RuntimeError("Blender geçerli bir GLB üretmedi.")
 
-    if not os.path.exists(output_glb):
-        raise RuntimeError("Blender GLB üretmedi")
-
-    blob_out = bucket.blob(f"avatars/{user_id}.glb")
-    blob_out.upload_from_filename(output_glb, content_type="model/gltf-binary")
-    blob_out.make_public()
-
-    url = blob_out.public_url
-    user_ref.set({"avatar_url": url}, merge=True)
-
-    print("=== Avatar Üretimi TAMAMLANDI ===")
-    print("Avatar URL:", url)
+    url = _publish_file(f"avatars/{user_id}.glb", output_path, "model/gltf-binary")
+    user_ref.set({"avatar_url": url, "avatar_status": "ready"}, merge=True)
     return url
