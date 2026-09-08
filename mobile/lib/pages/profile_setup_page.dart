@@ -36,7 +36,8 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
   Future<void> pickFront() async {
     final file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (file == null) return;
-    setState(() async => selfieFront = await file.readAsBytes());
+    final bytes = await file.readAsBytes();
+    if (mounted) setState(() => selfieFront = bytes);
   }
 
   Future<void> pickSide() async {
@@ -56,25 +57,19 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
   Future<void> save() async {
     if (!_formKey.currentState!.validate()) return;
     if (selfieFront == null || selfieSide == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Ön ve yan selfie yükleyin.")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ön ve yan selfie yükleyin.")));
       return;
     }
 
     setState(() => saving = true);
     try {
       final uid = widget.userId;
-      final storage = FirebaseStorage.instanceFor(
-        bucket: "bitirmeprojesi-9b244.firebasestorage.app",
-      );
+      final storage = FirebaseStorage.instanceFor(bucket: "bitirmeprojesi-9b244.firebasestorage.app");
       final frontRef = storage.ref().child("selfies/${uid}_front.jpg");
       final sideRef = storage.ref().child("selfies/${uid}_side.jpg");
       await frontRef.putData(selfieFront!, SettableMetadata(contentType: "image/jpeg"));
       await sideRef.putData(selfieSide!, SettableMetadata(contentType: "image/jpeg"));
 
-      final frontUrl = await frontRef.getDownloadURL();
-      final sideUrl = await sideRef.getDownloadURL();
       final h = height.text.replaceAll(',', '.');
       final w = weight.text.replaceAll(',', '.');
       final s = shoulder.text.replaceAll(',', '.');
@@ -84,46 +79,33 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
 
       await FirebaseFirestore.instance.collection("users").doc(uid).set({
         "ad_soyad": name.text.trim(),
-        "boy": double.parse(h),
-        "kilo": double.parse(w),
-        "omuz_genisligi": double.parse(s),
-        "bel_cevresi": double.parse(wa),
-        "kalca_cevresi": double.parse(hi),
-        "bacak_uzunlugu": double.parse(l),
-        "cinsiyet": gender,
-        "selfie_front_url": frontUrl,
-        "selfie_side_url": sideUrl,
+        "boy": double.parse(h), "kilo": double.parse(w), "omuz_genisligi": double.parse(s),
+        "bel_cevresi": double.parse(wa), "kalca_cevresi": double.parse(hi),
+        "bacak_uzunlugu": double.parse(l), "cinsiyet": gender,
+        "selfie_front_url": await frontRef.getDownloadURL(),
+        "selfie_side_url": await sideRef.getDownloadURL(),
         "avatar_status": "queued",
       }, SetOptions(merge: true));
 
       final request = http.MultipartRequest("POST", Uri.parse(backendUrl));
       request.fields.addAll({
-        "user_id": uid,
-        "boy": h,
-        "kilo": w,
-        "cinsiyet": gender,
-        "omuz_genisligi": s,
-        "bel_cevresi": wa,
-        "kalca_cevresi": hi,
-        "bacak_uzunlugu": l,
+        "user_id": uid, "boy": h, "kilo": w, "cinsiyet": gender,
+        "omuz_genisligi": s, "bel_cevresi": wa, "kalca_cevresi": hi, "bacak_uzunlugu": l,
       });
       request.files.add(http.MultipartFile.fromBytes("selfie_front", selfieFront!, filename: "${uid}_front.jpg"));
       request.files.add(http.MultipartFile.fromBytes("selfie_side", selfieSide!, filename: "${uid}_side.jpg"));
 
       final response = await request.send().timeout(const Duration(minutes: 5));
       final body = await response.stream.bytesToString();
-      Map<String, dynamic>? json;
-      try { json = jsonDecode(body) as Map<String, dynamic>; } catch (_) {}
+      Map<String, dynamic>? result;
+      try { result = jsonDecode(body) as Map<String, dynamic>; } catch (_) {}
 
       if (!mounted) return;
-      if (response.statusCode == 200 && json?["status"] == "ok") {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Profil kaydedildi, avatar oluşturuldu.")),
-        );
+      if (response.statusCode == 200 && result?["status"] == "ok") {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profil kaydedildi, avatar oluşturuldu.")));
         Navigator.pop(context);
       } else {
-        final message = json?["message"]?.toString() ?? "Backend hata kodu: ${response.statusCode}";
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result?["message"]?.toString() ?? "Backend hata: ${response.statusCode}")));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: $e")));
@@ -142,9 +124,20 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
     ),
   );
 
+  Widget photoBox(String title, Uint8List? bytes, VoidCallback onTap) => GestureDetector(
+    onTap: onTap,
+    child: AspectRatio(
+      aspectRatio: 1,
+      child: Container(
+        decoration: BoxDecoration(border: Border.all(), borderRadius: BorderRadius.circular(12)),
+        child: bytes == null ? Center(child: Text(title)) : ClipRRect(borderRadius: BorderRadius.circular(11), child: Image.memory(bytes, fit: BoxFit.cover)),
+      ),
+    ),
+  );
+
   @override
   void dispose() {
-    for (final c in [name, height, weight, shoulder, waist, hip, leg]) c.dispose();
+    for (final c in [name, height, weight, shoulder, waist, hip, leg]) { c.dispose(); }
     super.dispose();
   }
 
@@ -157,19 +150,12 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
         child: Form(
           key: _formKey,
           child: Column(children: [
-            TextFormField(
-              controller: name,
-              decoration: const InputDecoration(labelText: "Ad Soyad", border: OutlineInputBorder()),
-              validator: (v) => v == null || v.trim().length < 2 ? "Ad Soyad girin" : null,
-            ),
+            TextFormField(controller: name, decoration: const InputDecoration(labelText: "Ad Soyad", border: OutlineInputBorder()), validator: (v) => v == null || v.trim().length < 2 ? "Ad Soyad girin" : null),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: gender,
               decoration: const InputDecoration(labelText: "Cinsiyet", border: OutlineInputBorder()),
-              items: const [
-                DropdownMenuItem(value: "Erkek", child: Text("Erkek")),
-                DropdownMenuItem(value: "Kadın", child: Text("Kadın")),
-              ],
+              items: const [DropdownMenuItem(value: "Erkek", child: Text("Erkek")), DropdownMenuItem(value: "Kadın", child: Text("Kadın"))],
               onChanged: (v) => setState(() => gender = v ?? gender),
             ),
             const SizedBox(height: 12),
@@ -182,36 +168,16 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
             const SizedBox(height: 8),
             const Text("İki fotoğraf: önden düz bakış + soldan/yan açı. Yüz ve saç net görünmeli.", textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            Row(children: [
-              Expanded(child: _photoBox("ÖN SELFİE", selfieFront, pickFront)),
-              const SizedBox(width: 12),
-              Expanded(child: _photoBox("YAN SELFİE", selfieSide, pickSide)),
-            ]),
+            Row(children: [Expanded(child: photoBox("ÖN SELFİE", selfieFront, pickFront)), const SizedBox(width: 12), Expanded(child: photoBox("YAN SELFİE", selfieSide, pickSide))]),
             const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: saving ? null : save,
-                icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.auto_awesome),
-                label: Text(saving ? "Avatar oluşturuluyor..." : "Kaydet ve Avatar Oluştur"),
-              ),
-            ),
+            SizedBox(width: double.infinity, child: FilledButton.icon(
+              onPressed: saving ? null : save,
+              icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.auto_awesome),
+              label: Text(saving ? "Avatar oluşturuluyor..." : "Kaydet ve Avatar Oluştur"),
+            )),
           ]),
         ),
       ),
     );
   }
-
-  Widget _photoBox(String title, Uint8List? bytes, VoidCallback onTap) => GestureDetector(
-    onTap: onTap,
-    child: AspectRatio(
-      aspectRatio: 1,
-      child: Container(
-        decoration: BoxDecoration(border: Border.all(), borderRadius: BorderRadius.circular(12)),
-        child: bytes == null
-            ? Center(child: Text(title))
-            : ClipRRect(borderRadius: BorderRadius.circular(11), child: Image.memory(bytes, fit: BoxFit.cover)),
-      ),
-    ),
-  );
 }
